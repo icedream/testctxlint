@@ -211,13 +211,16 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					}
 					if funcLit, ok := e.fun.(*ast.FuncLit); ok {
 						tb := benchmarkOrTestParam(funcLit.Type)
+						if tb == nil {
+							continue
+						}
 						pass.Report(analysis.Diagnostic{
 							Pos:     where.Pos(),
 							End:     where.End(),
 							Message: fmt.Sprintf("call to %s from a test subroutine%s", forbidden, context),
 							SuggestedFixes: []analysis.SuggestedFix{
 								{
-									Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb),
+									Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb.Name),
 									TextEdits: []analysis.TextEdit{
 										{
 											Pos:     where.Pos(),
