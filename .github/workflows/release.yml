@@ -28,6 +28,33 @@ jobs:
           cd cmd/testctxlint
           go generate gen_syso.go
       
+      - name: Commit updated syso back to repository
+        run: |
+          # Check if the syso file was modified
+          if git diff --quiet cmd/testctxlint/icon_windows_amd64.syso; then
+            echo "No changes to syso file, skipping commit"
+          else
+            echo "Syso file was updated, committing to main branch"
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            
+            # Store the updated syso file
+            cp cmd/testctxlint/icon_windows_amd64.syso /tmp/icon_windows_amd64.syso
+            
+            # Switch to main branch and apply the changes
+            git fetch origin main
+            git checkout main
+            cp /tmp/icon_windows_amd64.syso cmd/testctxlint/icon_windows_amd64.syso
+            
+            # Commit and push the changes
+            git add cmd/testctxlint/icon_windows_amd64.syso
+            git commit -m "Update Windows syso file for release ${{ github.ref_name }}"
+            git push origin main
+            
+            # Switch back to the tag for the release
+            git checkout ${{ github.ref_name }}
+          fi
+      
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
