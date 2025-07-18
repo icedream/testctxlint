@@ -14,9 +14,13 @@ Go 1.24 introduced `t.Context()` and `b.Context()` methods for `*testing.T` and 
 
 ### CLI Tool
 
+#### Using go install
 ```bash
 go install github.com/icedream/testctxlint/cmd/testctxlint@latest
 ```
+
+#### Using pre-built binaries
+Download the appropriate binary for your platform from the [releases page](https://github.com/icedream/testctxlint/releases).
 
 ## Requirements
 
@@ -166,10 +170,19 @@ Most Go IDEs that support the Go analysis framework should be able to use testct
 
 ### In CI/CD
 
+#### Using go install
 ```bash
 # Install and run in CI
 go install github.com/icedream/testctxlint/cmd/testctxlint@latest
 testctxlint ./...
+```
+
+#### Using pre-built binaries
+```bash
+# Download and extract pre-built binary
+curl -L -o testctxlint.tar.gz https://github.com/icedream/testctxlint/releases/latest/download/testctxlint_linux_x86_64.tar.gz
+tar -xzf testctxlint.tar.gz
+./testctxlint ./...
 ```
 
 ## Sample Output
