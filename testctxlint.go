@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"os"
+	"strings"
 
 	"golang.org/x/mod/semver"
 	"golang.org/x/tools/go/analysis"
@@ -29,7 +31,9 @@ func goVersionAtLeast124(goVersion string) bool {
 	return semver.Compare(version, "v1.24") >= 0
 }
 
-var inTest bool // So Go version checks can be skipped during testing.
+// inTest indicates if the analyzer is running as part of a test. This will
+// disable the Go version check.
+var inTest = len(os.Args) > 0 && strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
 
 type scope struct {
 	// Scope-defining node
