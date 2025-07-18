@@ -180,10 +180,7 @@ func BenchmarkTestctxlint(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		graph, err := checker.Analyze(analyzers, initial, opts)
-		b.StopTimer()
-
 		assert.NoError(b, err)
 		assert.NotEmpty(b, graph)
-		b.StartTimer()
 	}
 }

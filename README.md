@@ -189,6 +189,41 @@ tar -xzf testctxlint.tar.gz
 ./testctxlint ./...
 ```
 
+## Benchmarking
+
+The project includes performance benchmarks that can be used to monitor performance regressions:
+
+### Running Benchmarks Locally
+
+```bash
+# Run benchmarks
+go test -bench=. -benchmem
+
+# Run benchmarks multiple times for statistical analysis
+go test -bench=. -benchmem -count=5
+
+# Compare benchmark results using benchstat
+go install golang.org/x/perf/cmd/benchstat@latest
+go test -bench=. -benchmem -count=5 | tee new.txt
+# (make changes to code)
+go test -bench=. -benchmem -count=5 | tee old.txt
+benchstat old.txt new.txt
+```
+
+### Automated Benchmark Comparison
+
+The repository includes a GitHub Actions workflow that automatically compares benchmark performance between the main branch and pull requests. When you open a PR:
+
+1. Benchmarks are run on both the main branch and your PR branch
+2. Performance differences are calculated using `benchstat`
+3. Results are posted as a comment on the PR
+4. Benchmark data is stored as artifacts for historical analysis
+
+The benchmark comparison helps identify performance regressions and improvements, providing metrics for:
+- **Execution time** (ns/op): How long operations take
+- **Memory usage** (B/op): Bytes allocated per operation  
+- **Allocations** (allocs/op): Number of memory allocations per operation
+
 ## Sample Output
 
 When testctxlint finds issues, it provides clear messages and suggestions:

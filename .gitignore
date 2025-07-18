@@ -23,3 +23,9 @@ go.work
 
 # Goreleaser dist directory
 dist/
+
+# Benchmark files
+*_benchmarks.txt
+benchmark_comparison.txt
+benchmark_report.md
+

@@ -1,10 +1,11 @@
+---
 name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
@@ -15,15 +16,18 @@ jobs:
           - '1.24'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ matrix.goversion }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.goversion }}
 
-    - name: Build
-      run: go build -v ./...
+      - name: Build
+        run: go build -v ./...
 
-    - name: Test
-      uses: robherley/go-test-action@v0.6.0
+      - name: Test
+        uses: robherley/go-test-action@v0.6.0
+
+      - name: Benchmark
+        run: go test -bench=. -benchmem -benchtime=1s -timeout=2m
