@@ -30,6 +30,10 @@ func TestLorem(t *testing.T) {
 	go func() {
 		example(context.Background()) // fix: example(t.Context())
 	}()
+
+	go func(t2 *testing.T) {
+		example(context.Background()) // fix: example(t2.Context())
+	}(t)
 }
 
 func TestIpsum(t *testing.T) {
@@ -49,6 +53,10 @@ func TestIpsum(t *testing.T) {
 	go func() {
 		example(context.TODO()) // fix: example(t.Context())
 	}()
+
+	go func(t2 *testing.T) {
+		example(context.TODO()) // fix: example(t2.Context())
+	}(t)
 }
 
 func TestDolem(t *testing.T) {
