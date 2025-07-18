@@ -23,6 +23,11 @@ jobs:
         with:
           go-version-file: go.mod
       
+      - name: Generate Windows metadata
+        run: |
+          cd cmd/testctxlint
+          go generate gen_syso.go
+      
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
