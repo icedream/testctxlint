@@ -1,4 +1,8 @@
-# testctxlint
+<p align="center">
+  <img src="assets/logo-icon.svg" alt="testctxlint logo" width="80">
+  <br>
+  <strong>testctxlint</strong>
+</p>
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/icedream/testctxlint.svg)](https://pkg.go.dev/github.com/icedream/testctxlint)
 
