@@ -178,7 +178,7 @@ When testctxlint finds issues, it provides clear messages and suggestions:
 
 ```
 /path/to/file.go:15:9: call to context.Background from a test routine
-/path/to/file.go:23:11: call to context.TODO from a test subroutine
+/path/to/file.go:23:11: call to context.TODO from a test routine
 ```
 
 With the `-fix` flag, it can automatically apply the suggested fixes:
