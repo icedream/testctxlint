@@ -6,7 +6,6 @@ import (
 	"go/token"
 	"go/types"
 
-	"golang.org/x/exp/typeparams"
 	"golang.org/x/mod/semver"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -31,14 +30,34 @@ func goVersionAtLeast124(goVersion string) bool {
 }
 
 var inTest bool // So Go version checks can be skipped during testing.
-type posEnd interface {
-	Pos() token.Pos
-	End() token.Pos
-}
 
 type scope struct {
-	posEnd
-	Type *ast.FuncType
+	// Scope-defining node
+	ast.Node
+
+	// The function that declares this scope
+	funcType *ast.FuncType
+
+	// Parent scope or nil
+	parent *scope
+}
+
+func (s *scope) isAncestorOf(sub *scope) bool {
+	for p := sub.parent; p != nil; p = p.parent {
+		if p == s {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *scope) findNearestBenchmarkOrTestParam() *ast.Ident {
+	for current := s; current != nil; current = current.parent {
+		if id := benchmarkOrTestParam(current.funcType); id != nil {
+			return id
+		}
+	}
+	return nil
 }
 
 // run applies the analyzer to a package.
@@ -69,28 +88,23 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	// look for calls to context.TODO or context.Background
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
-	toDecl := localFunctionDecls(pass.TypesInfo, pass.Files)
-
-	// asyncs maps nodes whose statements will be executed concurrently
-	// with respect to some test function, to the call sites where they
-	// are invoked asynchronously. There may be multiple such call sites
-	// for e.g. test helpers.
-	asyncs := make(map[ast.Node][]*extent)
-	var regions []ast.Node
-	addCall := func(c *extent) {
-		if c != nil {
-			r := c.region
-			if asyncs[r] == nil {
-				regions = append(regions, r)
+	// Collect all of the scopes which have test/benchmark params.
+	scopes := []*scope{}
+	findScope := func(pos token.Pos) *scope {
+		// log.Println("findScope", len(scopes), pos)
+		var closestScope *scope
+		for _, s := range scopes {
+			// ignore scopes not containing this token
+			if s.Pos() > pos || pos > s.End() {
+				continue
 			}
-			asyncs[r] = append(asyncs[r], c)
+			// ignore less specific scopes
+			if closestScope != nil && s.isAncestorOf(closestScope) {
+				continue
+			}
+			closestScope = s
 		}
-	}
-
-	// Collect all of the go callee() and t.Run(name, callee) extents.
-	funcScopes := []scope{}
-	getCurrentFuncScope := func() scope {
-		return funcScopes[len(funcScopes)-1]
+		return closestScope
 	}
 	inspect.Nodes([]ast.Node{
 		(*ast.CallExpr)(nil),
@@ -98,144 +112,107 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		(*ast.FuncLit)(nil),
 		(*ast.GoStmt)(nil),
 	}, func(node ast.Node, push bool) bool {
-		// check whether we just existed func scopes
-		for i := len(funcScopes) - 1; i >= 0; i-- {
-			if funcScopes[i].End() >= node.Pos() {
-				continue
-			}
-			funcScopes = funcScopes[0:i]
-		}
-
 		if !push {
 			return false
 		}
+
 		switch node := node.(type) {
 		case *ast.FuncLit:
 			result := benchmarkOrTestParam(node.Type)
-			if result != nil {
-				funcScopes = append(funcScopes, scope{posEnd: node, Type: node.Type})
-				return true
+			if result == nil {
+				return false // not a test/benchmark method
 			}
-			return false // not a test/benchmark method
+			scopes = append(scopes, &scope{
+				Node:     node,
+				funcType: node.Type,
+				parent:   findScope(node.Pos()),
+			})
 
 		case *ast.FuncDecl:
 			result := benchmarkOrTestParam(node.Type)
-			if result != nil {
-				funcScopes = append(funcScopes, scope{posEnd: node, Type: node.Type})
-				return true
+			if result == nil {
+				return false // not a test/benchmark method
 			}
-			return false // not a test/benchmark method
+			scopes = append(scopes, &scope{
+				Node:     node,
+				funcType: node.Type,
+				parent:   findScope(node.Pos()),
+			})
 
 		case *ast.GoStmt:
-			c := goAsyncCall(pass.TypesInfo, node, toDecl)
-			addCall(c)
+			f := funcFromGoAsyncCall(node)
+			if funcLit, ok := f.(*ast.FuncLit); ok {
+				scopes = append(scopes, &scope{
+					Node:     funcLit,
+					funcType: funcLit.Type,
+					parent:   findScope(funcLit.Pos()),
+				})
+			}
 
 		case *ast.CallExpr:
-			if c := tRunCall(pass.TypesInfo, node); c != nil {
-				addCall(c)
-				return true
-			}
-
-			x, sel, fn := forbiddenMethod(pass.TypesInfo, node)
-			if x == nil {
-				return true
-			}
-
-			// check if already in one of the subtest regions
-			for _, region := range regions {
-				for _, e := range asyncs[region] {
-					if exprWithinScope(e.scope, node) {
-						return true
-					}
+			if f := funcFromBenchOrTestRunCall(pass.TypesInfo, node); f != nil {
+				if funcLit, ok := f.(*ast.FuncLit); ok {
+					scopes = append(scopes, &scope{
+						Node:     funcLit,
+						funcType: funcLit.Type,
+						parent:   findScope(funcLit.Pos()),
+					})
 				}
+				// return true
 			}
 
-			forbidden := formatMethod(sel, fn) // e.g. "context.TODO", "(*testing.T).Forbidden"
+			return false
+		}
+		return true
+	})
 
-			var context string
-			funcDecl := getCurrentFuncScope()
-			tb := benchmarkOrTestParam(funcDecl.Type)
+	// Check each scope for context creation calls
+	for _, s := range scopes {
+		for n := range ast.Preorder(s.Node) {
+			if n == s.Node {
+				continue // always descend into the region itself.
+			}
+
+			if findScope(n.Pos()) != s {
+				continue // will be revisited via another scope
+			}
+
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+
+			x, sel, fn := forbiddenMethod(pass.TypesInfo, call)
+			if x == nil {
+				continue
+			}
+
+			forbidden := formatMethod(sel, fn) // e.g. "(*testing.T).Forbidden
+
+			tb := s.findNearestBenchmarkOrTestParam()
+			if tb == nil {
+				continue
+			}
+
 			pass.Report(analysis.Diagnostic{
-				Pos:     node.Pos(),
-				End:     node.End(),
-				Message: fmt.Sprintf("call to %s from a test routine%s", forbidden, context),
+				Pos:     call.Pos(),
+				End:     call.End(),
+				Message: fmt.Sprintf("call to %s from a test routine", forbidden),
 				SuggestedFixes: []analysis.SuggestedFix{
 					{
 						Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb.Name),
 						TextEdits: []analysis.TextEdit{
 							{
-								Pos:     node.Pos(),
-								End:     node.End(),
+								Pos:     call.Pos(),
+								End:     call.End(),
 								NewText: fmt.Appendf(nil, "%s.Context()", tb),
 							},
 						},
 					},
 				},
 			})
-			return false
+			continue
 		}
-		return true
-	})
-
-	// Check for t.Forbidden() calls within each region r that is a
-	// callee in some go r() or a t.Run("name", r).
-	//
-	// Also considers a special case when r is a go t.Forbidden() call.
-	for _, region := range regions {
-		ast.Inspect(region, func(n ast.Node) bool {
-			if n == region {
-				return true // always descend into the region itself.
-			} else if asyncs[n] != nil {
-				return false // will be visited by another region.
-			}
-
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			x, sel, fn := forbiddenMethod(pass.TypesInfo, call)
-			if x == nil {
-				return true
-			}
-
-			for _, e := range asyncs[region] {
-				if !withinScope(e.scope, x) {
-					forbidden := formatMethod(sel, fn) // e.g. "(*testing.T).Forbidden
-
-					var context string
-					var where analysis.Range = e.async // Put the report at the go fun() or t.Run(name, fun).
-					if _, local := e.fun.(*ast.FuncLit); local {
-						where = call // Put the report at the t.Forbidden() call.
-					} else if id, ok := e.fun.(*ast.Ident); ok {
-						context = fmt.Sprintf(" (%s calls %s)", id.Name, forbidden)
-					}
-					if funcLit, ok := e.fun.(*ast.FuncLit); ok {
-						tb := benchmarkOrTestParam(funcLit.Type)
-						if tb == nil {
-							continue
-						}
-						pass.Report(analysis.Diagnostic{
-							Pos:     where.Pos(),
-							End:     where.End(),
-							Message: fmt.Sprintf("call to %s from a test subroutine%s", forbidden, context),
-							SuggestedFixes: []analysis.SuggestedFix{
-								{
-									Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb.Name),
-									TextEdits: []analysis.TextEdit{
-										{
-											Pos:     where.Pos(),
-											End:     where.End(),
-											NewText: fmt.Appendf(nil, "%s.Context()", tb),
-										},
-									},
-								},
-							},
-						})
-					}
-				}
-			}
-			return true
-		})
 	}
 
 	return nil, nil
@@ -339,17 +316,6 @@ func typeIsTestingDotTOrB(expr ast.Expr) (string, bool) {
 	return varTypeName, ok
 }
 
-// isContextCreationCall reports whether call is a static call to one of:
-// - context.TODO
-// - context.Background
-func isContextCreationCall(pass *analysis.Pass, call *ast.CallExpr) bool {
-	fn := typeutil.StaticCallee(pass.TypesInfo, call)
-	if fn == nil {
-		return false
-	}
-	return isContextCreationFn(fn)
-}
-
 // isContextCreationFn reports whether the given func reference points to:
 // - context.TODO
 // - context.Background
@@ -383,78 +349,19 @@ func isMethodNamed(f *types.Func, pkgPath string, names ...string) bool {
 	return false // not in names
 }
 
-// withinScope returns true if x.Pos() is in [scope.Pos(), scope.End()].
-func withinScope(scope ast.Node, x types.Object) bool {
-	if scope != nil {
-		return x.Pos() != token.NoPos && scope.Pos() <= x.Pos() && x.Pos() <= scope.End()
-	}
-	return false
+// funcFromGoAsyncCall returns the func of a call from a go fun() statement.
+func funcFromGoAsyncCall(goStmt *ast.GoStmt) ast.Expr {
+	return funcFromGoCall(goStmt.Call)
 }
 
-func exprWithinScope(scope ast.Node, x ast.Expr) bool {
-	if scope != nil {
-		return x.Pos() != token.NoPos && scope.Pos() <= x.Pos() && x.Pos() <= scope.End()
-	}
-	return false
-}
-
-// localFunctionDecls returns a mapping from *types.Func to *ast.FuncDecl in files.
-func localFunctionDecls(info *types.Info, files []*ast.File) func(*types.Func) *ast.FuncDecl {
-	var fnDecls map[*types.Func]*ast.FuncDecl // computed lazily
-	return func(f *types.Func) *ast.FuncDecl {
-		if f != nil && fnDecls == nil {
-			fnDecls = make(map[*types.Func]*ast.FuncDecl)
-			for _, file := range files {
-				for _, decl := range file.Decls {
-					if fnDecl, ok := decl.(*ast.FuncDecl); ok {
-						if fn, ok := info.Defs[fnDecl.Name].(*types.Func); ok {
-							fnDecls[fn] = fnDecl
-						}
-					}
-				}
-			}
-		}
-		// TODO: set f = f.Origin() here.
-		return fnDecls[f]
-	}
-}
-
-// extent describes a region of code that needs to be checked for
-// t.Forbidden() calls as it is started asynchronously from an async
-// node go fun() or t.Run(name, fun).
-type extent struct {
-	region ast.Node // region of code to check for t.Forbidden() calls.
-	async  ast.Node // *ast.GoStmt or *ast.CallExpr (for t.Run)
-	scope  ast.Node // Report t.Forbidden() if t is not declared within scope.
-	fun    ast.Expr // fun in go fun() or t.Run(name, fun)
-}
-
-// goAsyncCall returns the extent of a call from a go fun() statement.
-func goAsyncCall(info *types.Info, goStmt *ast.GoStmt, toDecl func(*types.Func) *ast.FuncDecl) *extent {
-	return goCall(info, goStmt, goStmt.Call, toDecl)
-}
-
-// goCall returns the extent of a call statement.
-func goCall(info *types.Info, region ast.Node, call *ast.CallExpr, toDecl func(*types.Func) *ast.FuncDecl) *extent {
+// funcFromGoCall returns the func of a call statement.
+func funcFromGoCall(call *ast.CallExpr) ast.Expr {
 	fun := ast.Unparen(call.Fun)
-	if id := funcIdent(fun); id != nil {
-		if lit := funcLitInScope(id); lit != nil {
-			return &extent{region: lit, async: nil, scope: nil, fun: fun}
-		}
-	}
-
-	if fn := typeutil.StaticCallee(info, call); fn != nil { // static call or method in the package?
-		if decl := toDecl(fn); decl != nil {
-			return &extent{region: decl, async: nil, scope: nil, fun: fun}
-		}
-	}
-
-	// Check go statement for go t.Forbidden() or go func(){t.Forbidden()}().
-	return &extent{region: region, async: nil, scope: nil, fun: fun}
+	return fun
 }
 
-// tRunCall returns the extent of a call from a t.Run("name", fun) expression.
-func tRunCall(info *types.Info, call *ast.CallExpr) *extent {
+// funcFromBenchOrTestRunCall returns the func of a call from a t.Run("name", fun) expression.
+func funcFromBenchOrTestRunCall(info *types.Info, call *ast.CallExpr) ast.Expr {
 	if len(call.Args) != 2 {
 		return nil
 	}
@@ -464,57 +371,5 @@ func tRunCall(info *types.Info, call *ast.CallExpr) *extent {
 	}
 
 	fun := ast.Unparen(call.Args[1])
-	if lit, ok := fun.(*ast.FuncLit); ok { // function lit?
-		return &extent{region: lit, async: call, scope: lit, fun: fun}
-	}
-
-	if id := funcIdent(fun); id != nil {
-		if lit := funcLitInScope(id); lit != nil { // function lit in variable?
-			return &extent{region: lit, async: call, scope: lit, fun: fun}
-		}
-	}
-
-	// Check within t.Run(name, fun) for calls to t.Forbidden,
-	// e.g. t.Run(name, func(t *testing.T){ t.Forbidden() })
-	return &extent{region: call, async: call, scope: fun, fun: fun}
-}
-
-func funcIdent(fun ast.Expr) *ast.Ident {
-	switch fun := ast.Unparen(fun).(type) {
-	case *ast.IndexExpr, *ast.IndexListExpr:
-		x, _, _, _ := typeparams.UnpackIndexExpr(fun) // necessary?
-		id, _ := x.(*ast.Ident)
-		return id
-	case *ast.Ident:
-		return fun
-	default:
-		return nil
-	}
-}
-
-// funcLitInScope returns a FuncLit that id is at least initially assigned to.
-//
-// TODO: This is closely tied to id.Obj which is deprecated.
-func funcLitInScope(id *ast.Ident) *ast.FuncLit {
-	// Compare to (*ast.Object).Pos().
-	if id.Obj == nil {
-		return nil
-	}
-	var rhs ast.Expr
-	switch d := id.Obj.Decl.(type) {
-	case *ast.AssignStmt:
-		for i, x := range d.Lhs {
-			if ident, isIdent := x.(*ast.Ident); isIdent && ident.Name == id.Name && i < len(d.Rhs) {
-				rhs = d.Rhs[i]
-			}
-		}
-	case *ast.ValueSpec:
-		for i, n := range d.Names {
-			if n.Name == id.Name && i < len(d.Values) {
-				rhs = d.Values[i]
-			}
-		}
-	}
-	lit, _ := rhs.(*ast.FuncLit)
-	return lit
+	return fun
 }
