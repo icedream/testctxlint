@@ -197,4 +197,7 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## License
 
-See [LICENSE.txt](LICENSE.txt) for details.
+See [LICENSE.txt](LICENSE.txt) for details on this software's license.
+
+This software incorporates material from third parties. For these portions,
+see [NOTICE.txt](NOTICE.txt) for details.
