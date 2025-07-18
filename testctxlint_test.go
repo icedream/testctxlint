@@ -60,7 +60,6 @@ func TestTestctxlint_Run(t *testing.T) {
 		}
 		emulateFixedFile := func(n string, data []byte) {
 			n = filepath.Clean(n)
-			t.Log("update file", n)
 			loadedFiles[n] = data
 		}
 
