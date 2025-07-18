@@ -1,5 +1,3 @@
-//go:build ignore
-
 package main
 
 // This file contains go:generate commands for building the Windows application icon with metadata.
