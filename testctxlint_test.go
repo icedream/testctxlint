@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -101,7 +102,7 @@ func TestTestctxlint_Run(t *testing.T) {
 				end = posn
 			}
 
-			assert.Equal(t, posn.Line, end.Line, "fixes must not span more than a single line")
+			// Note: We now support multi-line fixes, so we don't assert single-line requirement
 
 			data, _ := pass.ReadFile(posn.Filename)
 			lines := strings.Split(string(data), "\n")
@@ -120,29 +121,74 @@ func TestTestctxlint_Run(t *testing.T) {
 				if assert.NotNil(t, fixHintMatch, "linter must not trigger on correct lines") {
 					expectedFixedLine := fixHintMatch[1]
 
+					// For multi-line fixes, we need to apply them to the entire file content
+					// then extract the relevant line
+					fileContent := strings.Join(lines, "\n")
+
 					// apply all the fixes
 					for i, fix := range diag.SuggestedFixes {
 						assert.Equal(t, 0, i)
 						assert.NotEmpty(t, fix.Message)
 						assert.NotEmpty(t, fix.TextEdits)
-						for _, edit := range fix.TextEdits {
+
+						// Sort edits by position (reverse order to avoid position shifts)
+						edits := make([]analysis.TextEdit, len(fix.TextEdits))
+						copy(edits, fix.TextEdits)
+						sort.Slice(edits, func(i, j int) bool {
+							return edits[i].Pos > edits[j].Pos
+						})
+
+						for _, edit := range edits {
 							fixPosn := pkg.Fset.Position(edit.Pos)
 							fixEndn := pkg.Fset.Position(edit.End)
 							if !fixEndn.IsValid() {
 								fixEndn = fixPosn
 							}
 
-							// apply suggested fix and match up with expected result
-							line = line[0:fixPosn.Column-1] + string(edit.NewText) + line[fixEndn.Column-1:]
+							// Calculate byte offsets in the file content
+							startOffset := 0
+							endOffset := 0
+
+							// Count bytes to the start position
+							fileLines := strings.Split(fileContent, "\n")
+							for lineIdx := 0; lineIdx < fixPosn.Line-1; lineIdx++ {
+								startOffset += len(fileLines[lineIdx]) + 1 // +1 for newline
+							}
+							startOffset += fixPosn.Column - 1
+
+							// Count bytes to the end position
+							endOffset = startOffset
+							if fixEndn.Line != fixPosn.Line {
+								for lineIdx := fixPosn.Line - 1; lineIdx < fixEndn.Line-1; lineIdx++ {
+									endOffset += len(fileLines[lineIdx]) + 1 // +1 for newline
+								}
+								endOffset += fixEndn.Column - 1 - (fixPosn.Column - 1)
+							} else {
+								endOffset += fixEndn.Column - fixPosn.Column
+							}
+
+							// Apply the edit
+							if startOffset <= len(fileContent) && endOffset <= len(fileContent) {
+								fileContent = fileContent[:startOffset] + string(edit.NewText) + fileContent[endOffset:]
+							}
 						}
+					}
+
+					// Extract the line that should have changed
+					newLines := strings.Split(fileContent, "\n")
+					if posn.Line <= len(newLines) {
+						line = newLines[posn.Line-1]
 					}
 
 					// match up end result with fix hint
 					lineWithoutHint := line[0 : len(line)-len(fixHintMatch[0])]
 					assert.Equal(t, expectedFixedLine, strings.TrimSpace(lineWithoutHint))
 
-					// remove the hint so we can test for leftover hints
-					lines[i-1] = lineWithoutHint
+					// Update the lines array with the new file content for leftover hint checking
+					lines = newLines
+					if posn.Line <= len(lines) {
+						lines[posn.Line-1] = lineWithoutHint
+					}
 				}
 			}
 

@@ -37,6 +37,7 @@ func versionFromGoVersion(tag string) string {
 	if tag == "go1" {
 		return "v1.0.0"
 	}
+
 	if tag == "go1.0" {
 		return ""
 	}
@@ -45,14 +46,17 @@ func versionFromGoVersion(tag string) string {
 	if m == nil {
 		return ""
 	}
+
 	version := "v" + m[1]
 	if m[2] != "" {
 		version += m[2]
 	} else {
 		version += ".0"
 	}
+
 	if m[3] != "" {
 		version += "-" + m[4] + "." + m[5]
 	}
+
 	return version
 }

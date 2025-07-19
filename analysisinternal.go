@@ -21,6 +21,7 @@ func imports(pkg *types.Package, importName string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -34,6 +35,7 @@ func imports(pkg *types.Package, importName string) bool {
 // Copied from golang.org/x/tools/internal/analysisinternal.
 func isFunctionNamed(obj types.Object, pkgPath string, names ...string) bool {
 	f, ok := obj.(*types.Func)
+
 	return ok &&
 		isPackageLevel(obj) &&
 		f.Pkg().Path() == pkgPath &&
