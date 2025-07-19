@@ -31,9 +31,9 @@ linters:
     #- wsl_v5
   settings:
     cyclop:
-      max-complexity: 26
+      max-complexity: 16
     gocognit:
-      min-complexity: 52
+      min-complexity: 30
   exclusions:
     generated: lax
     rules:
