@@ -65,6 +65,15 @@ func (s *scope) findNearestBenchmarkOrTestParam() *ast.Ident {
 	return nil
 }
 
+func (s *scope) findNearestBenchmarkOrTestParamWithInfo() *testingParam {
+	for current := s; current != nil; current = current.parent {
+		if tp := benchmarkOrTestParamWithInfo(current.funcType); tp != nil {
+			return tp
+		}
+	}
+	return nil
+}
+
 // run applies the analyzer to a package.
 // It returns an error if the analyzer failed.
 //
@@ -78,29 +87,42 @@ func (s *scope) findNearestBenchmarkOrTestParam() *ast.Ident {
 // potentially between address spaces), use Facts, which are
 // serializable.
 func run(pass *analysis.Pass) (interface{}, error) {
+	if !shouldAnalyze(pass) {
+		return nil, nil
+	}
+
+	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	scopes := collectScopes(inspect, pass)
+	checkScopesForForbiddenCalls(pass, scopes)
+
+	return nil, nil
+}
+
+func shouldAnalyze(pass *analysis.Pass) bool {
 	if !inTest {
 		// check go version >= 1.24 (before then tb.Context didn't even exist)
 		if !goVersionAtLeast124(goVersion(pass.Pkg)) {
-			return nil, nil
+			return false
 		}
 	}
 
 	if !imports(pass.Pkg, "context") {
 		// package is not even using the context package
-		return nil, nil
+		return false
 	}
 
-	// look for calls to context.TODO or context.Background
-	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
+	return true
+}
 
-	// Collect all of the scopes which have test/benchmark params.
+func collectScopes(inspect *inspector.Inspector, pass *analysis.Pass) []*scope {
 	scopes := []*scope{}
+
 	findScope := func(pos token.Pos) *scope {
 		// log.Println("findScope", len(scopes), pos)
 		var closestScope *scope
 		for _, s := range scopes {
 			// ignore scopes not containing this token
-			if s.Pos() > pos || pos > s.End() {
+			if s.Node.Pos() > pos || pos > s.Node.End() {
 				continue
 			}
 			// ignore less specific scopes
@@ -111,6 +133,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		}
 		return closestScope
 	}
+
 	inspect.Nodes([]ast.Node{
 		(*ast.CallExpr)(nil),
 		(*ast.FuncDecl)(nil),
@@ -123,26 +146,22 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 		switch node := node.(type) {
 		case *ast.FuncLit:
-			result := benchmarkOrTestParam(node.Type)
-			if result == nil {
-				return false // not a test/benchmark method
+			if result := benchmarkOrTestParam(node.Type); result != nil {
+				scopes = append(scopes, &scope{
+					Node:     node,
+					funcType: node.Type,
+					parent:   findScope(node.Pos()),
+				})
 			}
-			scopes = append(scopes, &scope{
-				Node:     node,
-				funcType: node.Type,
-				parent:   findScope(node.Pos()),
-			})
 
 		case *ast.FuncDecl:
-			result := benchmarkOrTestParam(node.Type)
-			if result == nil {
-				return false // not a test/benchmark method
+			if result := benchmarkOrTestParam(node.Type); result != nil {
+				scopes = append(scopes, &scope{
+					Node:     node,
+					funcType: node.Type,
+					parent:   findScope(node.Pos()),
+				})
 			}
-			scopes = append(scopes, &scope{
-				Node:     node,
-				funcType: node.Type,
-				parent:   findScope(node.Pos()),
-			})
 
 		case *ast.GoStmt:
 			f := funcFromGoAsyncCall(node)
@@ -163,13 +182,31 @@ func run(pass *analysis.Pass) (interface{}, error) {
 						parent:   findScope(funcLit.Pos()),
 					})
 				}
-				// return true
 			}
-
 			return false
 		}
 		return true
 	})
+
+	return scopes
+}
+
+func checkScopesForForbiddenCalls(pass *analysis.Pass, scopes []*scope) {
+	findScope := func(pos token.Pos) *scope {
+		var closestScope *scope
+		for _, s := range scopes {
+			// ignore scopes not containing this token
+			if s.Node.Pos() > pos || pos > s.Node.End() {
+				continue
+			}
+			// ignore less specific scopes
+			if closestScope != nil && s.isAncestorOf(closestScope) {
+				continue
+			}
+			closestScope = s
+		}
+		return closestScope
+	}
 
 	// Check each scope for context creation calls
 	for _, s := range scopes {
@@ -194,33 +231,65 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 			forbidden := formatMethod(sel, fn) // e.g. "(*testing.T).Forbidden
 
-			tb := s.findNearestBenchmarkOrTestParam()
-			if tb == nil {
+			tbInfo := s.findNearestBenchmarkOrTestParamWithInfo()
+			if tbInfo == nil {
 				continue
 			}
 
-			pass.Report(analysis.Diagnostic{
-				Pos:     call.Pos(),
-				End:     call.End(),
-				Message: fmt.Sprintf("call to %s from a test routine", forbidden),
-				SuggestedFixes: []analysis.SuggestedFix{
-					{
-						Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb.Name),
-						TextEdits: []analysis.TextEdit{
-							{
-								Pos:     call.Pos(),
-								End:     call.End(),
-								NewText: fmt.Appendf(nil, "%s.Context()", tb),
-							},
+			reportForbiddenCall(pass, call, forbidden, tbInfo)
+		}
+	}
+}
+
+func reportForbiddenCall(pass *analysis.Pass, call *ast.CallExpr, forbidden string, tbInfo *testingParam) {
+	if tbInfo.isUnnamed {
+		// For unnamed parameters, provide two suggested fixes:
+		// 1. Name the parameter
+		// 2. Replace the context creation call
+		pass.Report(analysis.Diagnostic{
+			Pos:     call.Pos(),
+			End:     call.End(),
+			Message: fmt.Sprintf("call to %s from a test routine with unnamed parameter", forbidden),
+			SuggestedFixes: []analysis.SuggestedFix{
+				{
+					Message: fmt.Sprintf("name parameter as %s and replace %s with %s.Context", tbInfo.ident.Name, forbidden, tbInfo.ident.Name),
+					TextEdits: []analysis.TextEdit{
+						{
+							// Add parameter name before the type
+							Pos:     tbInfo.param.Type.Pos(),
+							End:     tbInfo.param.Type.Pos(),
+							NewText: []byte(tbInfo.ident.Name + " "),
+						},
+						{
+							// Replace context creation call
+							Pos:     call.Pos(),
+							End:     call.End(),
+							NewText: []byte(tbInfo.ident.Name + ".Context()"),
 						},
 					},
 				},
-			})
-			continue
-		}
+			},
+		})
+	} else {
+		// For named parameters, use the existing logic
+		pass.Report(analysis.Diagnostic{
+			Pos:     call.Pos(),
+			End:     call.End(),
+			Message: fmt.Sprintf("call to %s from a test routine", forbidden),
+			SuggestedFixes: []analysis.SuggestedFix{
+				{
+					Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tbInfo.ident.Name),
+					TextEdits: []analysis.TextEdit{
+						{
+							Pos:     call.Pos(),
+							End:     call.End(),
+							NewText: []byte(tbInfo.ident.Name + ".Context()"),
+						},
+					},
+				},
+			},
+		})
 	}
-
-	return nil, nil
 }
 
 func formatMethod(sel *types.Selection, fn *types.Func) string {
@@ -287,14 +356,69 @@ func forbiddenMethod(info *types.Info, call *ast.CallExpr) (types.Object, *types
 	return x, sel, fn
 }
 
+type testingParam struct {
+	ident     *ast.Ident
+	isUnnamed bool
+	param     *ast.Field // The original parameter for unnamed params
+}
+
 func benchmarkOrTestParam(fnTypeDecl *ast.FuncType) *ast.Ident {
 	// Check that the function's arguments include "*testing.T" or "*testing.B".
 	params := fnTypeDecl.Params.List
 
 	for _, param := range params {
-		if _, ok := typeIsTestingDotTOrB(param.Type); ok {
+		if testingType, ok := typeIsTestingDotTOrB(param.Type); ok {
 			if len(param.Names) > 0 {
 				return param.Names[0]
+			}
+			// Handle unnamed testing parameters by creating a synthetic identifier
+			// with a conventional name based on the testing type
+			var name string
+			if testingType == "T" {
+				name = "t"
+			} else if testingType == "B" {
+				name = "b"
+			}
+			return &ast.Ident{
+				Name: name,
+				// Use the position of the type for the synthetic identifier
+				NamePos: param.Type.Pos(),
+			}
+		}
+	}
+
+	return nil
+}
+
+func benchmarkOrTestParamWithInfo(fnTypeDecl *ast.FuncType) *testingParam {
+	// Check that the function's arguments include "*testing.T" or "*testing.B".
+	params := fnTypeDecl.Params.List
+
+	for _, param := range params {
+		if testingType, ok := typeIsTestingDotTOrB(param.Type); ok {
+			if len(param.Names) > 0 {
+				return &testingParam{
+					ident:     param.Names[0],
+					isUnnamed: false,
+					param:     param,
+				}
+			}
+			// Handle unnamed testing parameters by creating a synthetic identifier
+			// with a conventional name based on the testing type
+			var name string
+			if testingType == "T" {
+				name = "t"
+			} else if testingType == "B" {
+				name = "b"
+			}
+			return &testingParam{
+				ident: &ast.Ident{
+					Name: name,
+					// Use the position of the type for the synthetic identifier
+					NamePos: param.Type.Pos(),
+				},
+				isUnnamed: true,
+				param:     param,
 			}
 		}
 	}

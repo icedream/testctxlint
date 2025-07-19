@@ -97,3 +97,21 @@ func BenchmarkDolem(b *testing.B) {
 		example(b2.Context())
 	})
 }
+
+func TestUnnamedParam(*testing.T) {
+	ctx := context.Background() // fix: ctx := t.Context()
+	example(ctx)
+
+	example(context.TODO()) // fix: example(t.Context())
+}
+
+func BenchmarkUnnamedParam(*testing.B) {
+	ctx := context.Background() // fix: ctx := b.Context()
+	example(ctx)
+
+	example(context.TODO()) // fix: example(b.Context())
+}
+
+func testSubUnnamed(*testing.T) {
+	example(context.Background()) // fix: example(t.Context())
+}
