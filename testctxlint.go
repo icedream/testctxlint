@@ -65,6 +65,15 @@ func (s *scope) findNearestBenchmarkOrTestParam() *ast.Ident {
 	return nil
 }
 
+func (s *scope) findNearestBenchmarkOrTestParamWithInfo() *testingParam {
+	for current := s; current != nil; current = current.parent {
+		if tp := benchmarkOrTestParamWithInfo(current.funcType); tp != nil {
+			return tp
+		}
+	}
+	return nil
+}
+
 // run applies the analyzer to a package.
 // It returns an error if the analyzer failed.
 //
@@ -194,28 +203,59 @@ func run(pass *analysis.Pass) (interface{}, error) {
 
 			forbidden := formatMethod(sel, fn) // e.g. "(*testing.T).Forbidden
 
-			tb := s.findNearestBenchmarkOrTestParam()
-			if tb == nil {
+			tbInfo := s.findNearestBenchmarkOrTestParamWithInfo()
+			if tbInfo == nil {
 				continue
 			}
 
-			pass.Report(analysis.Diagnostic{
-				Pos:     call.Pos(),
-				End:     call.End(),
-				Message: fmt.Sprintf("call to %s from a test routine", forbidden),
-				SuggestedFixes: []analysis.SuggestedFix{
-					{
-						Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tb.Name),
-						TextEdits: []analysis.TextEdit{
-							{
-								Pos:     call.Pos(),
-								End:     call.End(),
-								NewText: fmt.Appendf(nil, "%s.Context()", tb),
+			if tbInfo.isUnnamed {
+				// For unnamed parameters, provide two suggested fixes:
+				// 1. Name the parameter
+				// 2. Replace the context creation call
+				pass.Report(analysis.Diagnostic{
+					Pos:     call.Pos(),
+					End:     call.End(),
+					Message: fmt.Sprintf("call to %s from a test routine with unnamed parameter", forbidden),
+					SuggestedFixes: []analysis.SuggestedFix{
+						{
+							Message: fmt.Sprintf("name parameter as %s and replace %s with %s.Context", tbInfo.ident.Name, forbidden, tbInfo.ident.Name),
+							TextEdits: []analysis.TextEdit{
+								{
+									// Add parameter name before the type
+									Pos:     tbInfo.param.Type.Pos(),
+									End:     tbInfo.param.Type.Pos(),
+									NewText: []byte(tbInfo.ident.Name + " "),
+								},
+								{
+									// Replace context creation call
+									Pos:     call.Pos(),
+									End:     call.End(),
+									NewText: []byte(tbInfo.ident.Name + ".Context()"),
+								},
 							},
 						},
 					},
-				},
-			})
+				})
+			} else {
+				// For named parameters, use the existing logic
+				pass.Report(analysis.Diagnostic{
+					Pos:     call.Pos(),
+					End:     call.End(),
+					Message: fmt.Sprintf("call to %s from a test routine", forbidden),
+					SuggestedFixes: []analysis.SuggestedFix{
+						{
+							Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tbInfo.ident.Name),
+							TextEdits: []analysis.TextEdit{
+								{
+									Pos:     call.Pos(),
+									End:     call.End(),
+									NewText: []byte(tbInfo.ident.Name + ".Context()"),
+								},
+							},
+						},
+					},
+				})
+			}
 			continue
 		}
 	}
@@ -287,14 +327,69 @@ func forbiddenMethod(info *types.Info, call *ast.CallExpr) (types.Object, *types
 	return x, sel, fn
 }
 
+type testingParam struct {
+	ident    *ast.Ident
+	isUnnamed bool
+	param    *ast.Field // The original parameter for unnamed params
+}
+
 func benchmarkOrTestParam(fnTypeDecl *ast.FuncType) *ast.Ident {
 	// Check that the function's arguments include "*testing.T" or "*testing.B".
 	params := fnTypeDecl.Params.List
 
 	for _, param := range params {
-		if _, ok := typeIsTestingDotTOrB(param.Type); ok {
+		if testingType, ok := typeIsTestingDotTOrB(param.Type); ok {
 			if len(param.Names) > 0 {
 				return param.Names[0]
+			}
+			// Handle unnamed testing parameters by creating a synthetic identifier
+			// with a conventional name based on the testing type
+			var name string
+			if testingType == "T" {
+				name = "t"
+			} else if testingType == "B" {
+				name = "b"
+			}
+			return &ast.Ident{
+				Name: name,
+				// Use the position of the type for the synthetic identifier
+				NamePos: param.Type.Pos(),
+			}
+		}
+	}
+
+	return nil
+}
+
+func benchmarkOrTestParamWithInfo(fnTypeDecl *ast.FuncType) *testingParam {
+	// Check that the function's arguments include "*testing.T" or "*testing.B".
+	params := fnTypeDecl.Params.List
+
+	for _, param := range params {
+		if testingType, ok := typeIsTestingDotTOrB(param.Type); ok {
+			if len(param.Names) > 0 {
+				return &testingParam{
+					ident:     param.Names[0],
+					isUnnamed: false,
+					param:     param,
+				}
+			}
+			// Handle unnamed testing parameters by creating a synthetic identifier
+			// with a conventional name based on the testing type
+			var name string
+			if testingType == "T" {
+				name = "t"
+			} else if testingType == "B" {
+				name = "b"
+			}
+			return &testingParam{
+				ident: &ast.Ident{
+					Name: name,
+					// Use the position of the type for the synthetic identifier
+					NamePos: param.Type.Pos(),
+				},
+				isUnnamed: true,
+				param:     param,
 			}
 		}
 	}
