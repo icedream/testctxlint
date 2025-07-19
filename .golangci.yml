@@ -28,7 +28,6 @@ linters:
     - varnamelen
     - wrapcheck
     - wsl
-    #- wsl_v5
   settings:
     cyclop:
       max-complexity: 16
@@ -40,6 +39,9 @@ linters:
       - linters:
           - cyclop
         path: (.+)_test\.go
+      - linters:
+          - wsl_v5
+        path: (analysisinternal|stdlib|typesinternal)\.go
     paths: []
 formatters:
   enable:
