@@ -1,0 +1,55 @@
+version: "2"
+run:
+  tests: false
+linters:
+  default: all
+  disable:
+    - depguard
+    - dupl
+    - err113
+    - exhaustive
+    - exhaustruct
+    - forcetypeassert
+    - funcorder
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - godot
+    - gocyclo
+    - godox
+    - gomoddirectives
+    - inamedparam
+    - ireturn
+    - mnd
+    - nilnil
+    - nlreturn
+    - nonamedreturns
+    - tagliatelle
+    - varnamelen
+    - wrapcheck
+    - wsl
+    #- wsl_v5
+  settings:
+    cyclop:
+      max-complexity: 26
+    gocognit:
+      min-complexity: 52
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - cyclop
+        path: (.+)_test\.go
+    paths: []
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+  exclusions:
+    generated: lax
+    paths: []
