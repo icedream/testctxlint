@@ -61,7 +61,6 @@ changelog:
       - "^chore:"
       - "^refactor:"
       - "^style:"
-      - "^perf:"
       - "^build:"
       - "^revert:"
       - "Merge pull request"
@@ -77,6 +76,9 @@ changelog:
     - title: Bug Fixes
       regexp: '^.*?fix(\([[:word:]]+\))?:.+$'
       order: 2
+    - title: Performance improvements
+      regexp: '^.*?perf(\([[:word:]]+\))?:.+$'
+      order: 3
     - title: Others
       order: 999
 
