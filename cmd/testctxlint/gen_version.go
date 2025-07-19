@@ -41,7 +41,7 @@ func parseVersion(version string) (major, minor, patch, build int) {
 	// Match semantic version pattern
 	re := regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-.*)?$`)
 	matches := re.FindStringSubmatch(version)
-	
+
 	if len(matches) >= 4 {
 		fmt.Sscanf(matches[1], "%d", &major)
 		fmt.Sscanf(matches[2], "%d", &minor)
@@ -51,26 +51,26 @@ func parseVersion(version string) (major, minor, patch, build int) {
 		}
 		return
 	}
-	
+
 	// If not a standard semantic version, try to parse as major.minor
 	re = regexp.MustCompile(`^(\d+)\.(\d+)(?:-.*)?$`)
 	matches = re.FindStringSubmatch(version)
-	
+
 	if len(matches) >= 3 {
 		fmt.Sscanf(matches[1], "%d", &major)
 		fmt.Sscanf(matches[2], "%d", &minor)
 		return
 	}
-	
+
 	return 0, 0, 0, 0
 }
 
 func main() {
 	version := getVersion()
 	major, minor, patch, build := parseVersion(version)
-	
+
 	fmt.Fprintf(os.Stderr, "Generating Windows resource file with version: %s (%d.%d.%d.%d)\n", version, major, minor, patch, build)
-	
+
 	// Generate the resource file using goversioninfo
 	cmd := exec.Command("go", "run", "-mod=mod", "github.com/josephspurrier/goversioninfo/cmd/goversioninfo",
 		"-64", // Generate 64-bit binaries
@@ -94,15 +94,15 @@ func main() {
 		fmt.Sprintf("-product-ver-patch=%d", patch),
 		fmt.Sprintf("-product-ver-build=%d", build),
 		"versioninfo.json")
-	
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	
+
 	err := cmd.Run()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error running goversioninfo: %v\n", err)
 		os.Exit(1)
 	}
-	
+
 	fmt.Fprintln(os.Stderr, "Successfully generated Windows resource file")
 }
