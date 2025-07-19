@@ -245,55 +245,39 @@ func checkScopesForForbiddenCalls(pass *analysis.Pass, scopes []*scope) {
 }
 
 func reportForbiddenCall(pass *analysis.Pass, call *ast.CallExpr, forbidden string, tbInfo *testingParam) {
-	if tbInfo.isUnnamed {
-		// For unnamed parameters, provide two suggested fixes:
-		// 1. Name the parameter
-		// 2. Replace the context creation call
-		pass.Report(analysis.Diagnostic{
+	message := "replace " + forbidden + " with " + tbInfo.ident.Name + ".Context"
+	edits := []analysis.TextEdit{
+		{
+			// Replace context creation call
 			Pos:     call.Pos(),
 			End:     call.End(),
-			Message: fmt.Sprintf("call to %s from a test routine with unnamed parameter", forbidden),
-			SuggestedFixes: []analysis.SuggestedFix{
-				{
-					Message: fmt.Sprintf("name parameter as %s and replace %s with %s.Context",
-						tbInfo.ident.Name, forbidden, tbInfo.ident.Name),
-					TextEdits: []analysis.TextEdit{
-						{
-							// Add parameter name before the type
-							Pos:     tbInfo.param.Type.Pos(),
-							End:     tbInfo.param.Type.Pos(),
-							NewText: []byte(tbInfo.ident.Name + " "),
-						},
-						{
-							// Replace context creation call
-							Pos:     call.Pos(),
-							End:     call.End(),
-							NewText: []byte(tbInfo.ident.Name + ".Context()"),
-						},
-					},
-				},
-			},
-		})
-	} else {
-		// For named parameters, use the existing logic
-		pass.Report(analysis.Diagnostic{
-			Pos:     call.Pos(),
-			End:     call.End(),
-			Message: fmt.Sprintf("call to %s from a test routine", forbidden),
-			SuggestedFixes: []analysis.SuggestedFix{
-				{
-					Message: fmt.Sprintf("replace %s with call to %s.Context", forbidden, tbInfo.ident.Name),
-					TextEdits: []analysis.TextEdit{
-						{
-							Pos:     call.Pos(),
-							End:     call.End(),
-							NewText: []byte(tbInfo.ident.Name + ".Context()"),
-						},
-					},
-				},
-			},
-		})
+			NewText: []byte(tbInfo.ident.Name + ".Context()"),
+		},
 	}
+
+	if tbInfo.isUnnamed {
+		message = "name parameter as " + tbInfo.ident.Name + " and " + message
+		edits = append([]analysis.TextEdit{
+			{
+				// Add parameter name before the type
+				Pos:     tbInfo.param.Type.Pos(),
+				End:     tbInfo.param.Type.Pos(),
+				NewText: []byte(tbInfo.ident.Name + " "),
+			},
+		}, edits...)
+	}
+
+	pass.Report(analysis.Diagnostic{
+		Pos:     call.Pos(),
+		End:     call.End(),
+		Message: fmt.Sprintf("call to %s from a test routine", forbidden),
+		SuggestedFixes: []analysis.SuggestedFix{
+			{
+				Message:   message,
+				TextEdits: edits,
+			},
+		},
+	})
 }
 
 func formatMethod(sel *types.Selection, fn *types.Func) string {
