@@ -130,14 +130,14 @@ func TestTestctxlint_Run(t *testing.T) {
 						assert.Equal(t, 0, i)
 						assert.NotEmpty(t, fix.Message)
 						assert.NotEmpty(t, fix.TextEdits)
-						
+
 						// Sort edits by position (reverse order to avoid position shifts)
 						edits := make([]analysis.TextEdit, len(fix.TextEdits))
 						copy(edits, fix.TextEdits)
 						sort.Slice(edits, func(i, j int) bool {
 							return edits[i].Pos > edits[j].Pos
 						})
-						
+
 						for _, edit := range edits {
 							fixPosn := pkg.Fset.Position(edit.Pos)
 							fixEndn := pkg.Fset.Position(edit.End)
@@ -148,18 +148,18 @@ func TestTestctxlint_Run(t *testing.T) {
 							// Calculate byte offsets in the file content
 							startOffset := 0
 							endOffset := 0
-							
+
 							// Count bytes to the start position
 							fileLines := strings.Split(fileContent, "\n")
 							for lineIdx := 0; lineIdx < fixPosn.Line-1; lineIdx++ {
 								startOffset += len(fileLines[lineIdx]) + 1 // +1 for newline
 							}
 							startOffset += fixPosn.Column - 1
-							
+
 							// Count bytes to the end position
 							endOffset = startOffset
 							if fixEndn.Line != fixPosn.Line {
-								for lineIdx := fixPosn.Line-1; lineIdx < fixEndn.Line-1; lineIdx++ {
+								for lineIdx := fixPosn.Line - 1; lineIdx < fixEndn.Line-1; lineIdx++ {
 									endOffset += len(fileLines[lineIdx]) + 1 // +1 for newline
 								}
 								endOffset += fixEndn.Column - 1 - (fixPosn.Column - 1)
