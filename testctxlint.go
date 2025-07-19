@@ -15,6 +15,7 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
+// Analyzer is the main instance of the testctxlinter analyzer.
 var Analyzer = &analysis.Analyzer{
 	Name:     "testctxlint",
 	Doc:      "check for any code where test context could be used but isn't",
