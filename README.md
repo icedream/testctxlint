@@ -59,6 +59,25 @@ Get help:
 testctxlint -help
 ```
 
+#### Sample Output
+
+When testctxlint finds issues, it provides clear messages and suggestions:
+
+```
+/path/to/file.go:15:9: call to context.Background from a test routine
+/path/to/file.go:23:11: call to context.TODO from a test routine
+```
+
+With the `-fix` flag, it can automatically apply the suggested fixes:
+
+```go
+// Before
+ctx := context.Background()
+
+// After
+ctx := t.Context()
+```
+
 ### Programmatic Usage
 
 ```go
@@ -223,25 +242,6 @@ The benchmark comparison helps identify performance regressions and improvements
 - **Execution time** (ns/op): How long operations take
 - **Memory usage** (B/op): Bytes allocated per operation  
 - **Allocations** (allocs/op): Number of memory allocations per operation
-
-## Sample Output
-
-When testctxlint finds issues, it provides clear messages and suggestions:
-
-```
-/path/to/file.go:15:9: call to context.Background from a test routine
-/path/to/file.go:23:11: call to context.TODO from a test routine
-```
-
-With the `-fix` flag, it can automatically apply the suggested fixes:
-
-```go
-// Before
-ctx := context.Background()
-
-// After
-ctx := t.Context()
-```
 
 ## Testing
 
