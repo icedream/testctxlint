@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/tools/go/analysis/singlechecker"
-
 	"github.com/icedream/testctxlint"
+	"golang.org/x/tools/go/analysis/singlechecker"
 )
 
 // Build information set by goreleaser
@@ -21,7 +20,7 @@ func main() {
 	// Handle version flag before singlechecker.Main processes it
 	for _, arg := range os.Args {
 		if arg == "-V" {
-			fmt.Printf("testctxlint version %s, commit %s, built at %s\n", version, commit, date)
+			_, _ = fmt.Fprintf(os.Stdout, "testctxlint version %s, commit %s, built at %s\n", version, commit, date)
 			os.Exit(0)
 		}
 	}
