@@ -29,10 +29,12 @@ jobs:
           go generate gen_syso.go
       
       - name: Commit updated syso back to repository
+        id: syso-update
         run: |
           # Check if the syso file was modified
           if git diff --quiet cmd/testctxlint/icon_windows_amd64.syso; then
             echo "No changes to syso file, skipping commit"
+            echo "retagged=false" >> $GITHUB_OUTPUT
           else
             echo "Syso file was updated, committing to main branch"
             git config --local user.email "action@github.com"
@@ -51,11 +53,20 @@ jobs:
             git commit -m "build: update syso for ${{ github.ref_name }}"
             git push origin main
             
-            # Switch back to the tag for the release
-            git checkout ${{ github.ref_name }}
+            # Delete the existing tag and recreate it on the updated main branch
+            echo "Retagging ${{ github.ref_name }} to include syso changes"
+            git tag -d ${{ github.ref_name }}
+            git push origin --delete ${{ github.ref_name }}
+            git tag ${{ github.ref_name }}
+            git push origin ${{ github.ref_name }}
+            
+            # Set output to skip GoReleaser - the new tag push will trigger a fresh release
+            echo "Workflow will skip GoReleaser - new tag will trigger fresh release with updated syso"
+            echo "retagged=true" >> $GITHUB_OUTPUT
           fi
       
       - name: Run GoReleaser
+        if: steps.syso-update.outputs.retagged != 'true'
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
