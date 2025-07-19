@@ -243,6 +243,12 @@ ctx := context.Background()
 ctx := t.Context()
 ```
 
+## Testing
+
+You can run the usual `go test` commands to run the tests in this repository.
+
+Additionally, we lint our code using [golangci-lint v2](https://github.com/golangci/golangci-lint).
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues or pull requests.
