@@ -3,7 +3,6 @@ package testctxlint
 import (
 	"fmt"
 	"go/ast"
-	"go/token"
 	"go/types"
 	"os"
 	"strings"
@@ -38,37 +37,6 @@ func goVersionAtLeast124(goVersion string) bool {
 // disable the Go version check.
 var inTest = len(os.Args) > 0 && strings.HasSuffix(strings.TrimSuffix(os.Args[0], ".exe"), ".test")
 
-type scope struct {
-	// Scope-defining node
-	ast.Node
-
-	// The function that declares this scope
-	funcType *ast.FuncType
-
-	// Parent scope or nil
-	parent *scope
-}
-
-func (s *scope) isAncestorOf(sub *scope) bool {
-	for p := sub.parent; p != nil; p = p.parent {
-		if p == s {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (s *scope) findNearestBenchmarkOrTestParamWithInfo() *testingParam {
-	for current := s; current != nil; current = current.parent {
-		if tp := benchmarkOrTestParamWithInfo(current.funcType); tp != nil {
-			return tp
-		}
-	}
-
-	return nil
-}
-
 // run applies the analyzer to a package.
 // It returns an error if the analyzer failed.
 //
@@ -87,8 +55,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	}
 
 	inspect := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-	scopes := collectScopes(inspect, pass)
-	checkScopesForForbiddenCalls(pass, scopes)
+	scopeCol := collectScopes(inspect, pass)
+	checkScopesForForbiddenCalls(pass, scopeCol)
 
 	return nil, nil
 }
@@ -109,28 +77,8 @@ func shouldAnalyze(pass *analysis.Pass) bool {
 	return true
 }
 
-func collectScopes(inspect *inspector.Inspector, pass *analysis.Pass) []*scope {
-	scopes := []*scope{}
-
-	findScope := func(pos token.Pos) *scope {
-		// log.Println("findScope", len(scopes), pos)
-		var closestScope *scope
-
-		for _, s := range scopes {
-			// ignore scopes not containing this token
-			if s.Pos() > pos || pos > s.End() {
-				continue
-			}
-			// ignore less specific scopes
-			if closestScope != nil && s.isAncestorOf(closestScope) {
-				continue
-			}
-
-			closestScope = s
-		}
-
-		return closestScope
-	}
+func collectScopes(inspect *inspector.Inspector, pass *analysis.Pass) *scopeCollection {
+	scopeCol := &scopeCollection{}
 
 	inspect.Nodes([]ast.Node{
 		(*ast.CallExpr)(nil),
@@ -145,39 +93,39 @@ func collectScopes(inspect *inspector.Inspector, pass *analysis.Pass) []*scope {
 		switch node := node.(type) {
 		case *ast.FuncLit:
 			if result := benchmarkOrTestParam(node.Type); result != nil {
-				scopes = append(scopes, &scope{
+				scopeCol.add(&scope{
 					Node:     node,
 					funcType: node.Type,
-					parent:   findScope(node.Pos()),
+					parent:   scopeCol.findScope(node.Pos()),
 				})
 			}
 
 		case *ast.FuncDecl:
 			if result := benchmarkOrTestParam(node.Type); result != nil {
-				scopes = append(scopes, &scope{
+				scopeCol.add(&scope{
 					Node:     node,
 					funcType: node.Type,
-					parent:   findScope(node.Pos()),
+					parent:   scopeCol.findScope(node.Pos()),
 				})
 			}
 
 		case *ast.GoStmt:
 			f := funcFromGoAsyncCall(node)
 			if funcLit, ok := f.(*ast.FuncLit); ok {
-				scopes = append(scopes, &scope{
+				scopeCol.add(&scope{
 					Node:     funcLit,
 					funcType: funcLit.Type,
-					parent:   findScope(funcLit.Pos()),
+					parent:   scopeCol.findScope(funcLit.Pos()),
 				})
 			}
 
 		case *ast.CallExpr:
 			if f := funcFromBenchOrTestRunCall(pass.TypesInfo, node); f != nil {
 				if funcLit, ok := f.(*ast.FuncLit); ok {
-					scopes = append(scopes, &scope{
+					scopeCol.add(&scope{
 						Node:     funcLit,
 						funcType: funcLit.Type,
-						parent:   findScope(funcLit.Pos()),
+						parent:   scopeCol.findScope(funcLit.Pos()),
 					})
 				}
 			}
@@ -188,60 +136,49 @@ func collectScopes(inspect *inspector.Inspector, pass *analysis.Pass) []*scope {
 		return true
 	})
 
-	return scopes
+	return scopeCol
 }
 
-func checkScopesForForbiddenCalls(pass *analysis.Pass, scopes []*scope) {
-	findScope := func(pos token.Pos) *scope {
-		var closestScope *scope
+func checkScopesForForbiddenCalls(pass *analysis.Pass, scopeCol *scopeCollection) {
+	for _, s := range scopeCol.scopes {
+		checkScopeForForbiddenCalls(pass, s, scopeCol)
+	}
+}
 
-		for _, s := range scopes {
-			// ignore scopes not containing this token
-			if s.Pos() > pos || pos > s.End() {
-				continue
-			}
-			// ignore less specific scopes
-			if closestScope != nil && s.isAncestorOf(closestScope) {
-				continue
-			}
-
-			closestScope = s
+// checkScopeForForbiddenCalls checks a single scope for forbidden context calls
+func checkScopeForForbiddenCalls(pass *analysis.Pass, s *scope, scopeCol *scopeCollection) {
+	// Use ast.Inspect for more efficient traversal of just this scope's subtree
+	ast.Inspect(s.Node, func(n ast.Node) bool {
+		if n == nil || n == s.Node {
+			return true // always descend into the scope itself
 		}
 
-		return closestScope
-	}
-
-	// Check each scope for context creation calls
-	for _, s := range scopes {
-		for n := range ast.Preorder(s.Node) {
-			if n == s.Node {
-				continue // always descend into the region itself.
-			}
-
-			if findScope(n.Pos()) != s {
-				continue // will be revisited via another scope
-			}
-
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				continue
-			}
-
-			x, sel, fn := forbiddenMethod(pass.TypesInfo, call)
-			if x == nil {
-				continue
-			}
-
-			forbidden := formatMethod(sel, fn) // e.g. "(*testing.T).Forbidden
-
-			tbInfo := s.findNearestBenchmarkOrTestParamWithInfo()
-			if tbInfo == nil {
-				continue
-			}
-
-			reportForbiddenCall(pass, call, forbidden, tbInfo)
+		// Skip nodes that belong to a different (nested) scope
+		if foundScope := scopeCol.findScope(n.Pos()); foundScope != nil && foundScope != s {
+			return false // will be handled when processing that scope
 		}
-	}
+
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		x, sel, fn := forbiddenMethod(pass.TypesInfo, call)
+		if x == nil {
+			return true
+		}
+
+		forbidden := formatMethod(sel, fn)
+
+		tbInfo := s.findNearestBenchmarkOrTestParamWithInfo()
+		if tbInfo == nil {
+			return true
+		}
+
+		reportForbiddenCall(pass, call, forbidden, tbInfo)
+
+		return true
+	})
 }
 
 func reportForbiddenCall(pass *analysis.Pass, call *ast.CallExpr, forbidden string, tbInfo *testingParam) {
