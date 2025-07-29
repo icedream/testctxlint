@@ -14,6 +14,14 @@ Built using Go's analysis framework, testctxlint integrates seamlessly with exis
 
 Go 1.24 introduced `t.Context()` and `b.Context()` methods for `*testing.T` and `*testing.B` respectively ([see Go 1.24 changelog](https://tip.golang.org/doc/go1.24#testingpkgtesting)). These provide contexts that are automatically cancelled when the test finishes, making them more appropriate for test scenarios than `context.Background()` or `context.TODO()`.
 
+## Alternatives
+
+Before you use this linter, there also exists https://github.com/ldez/usetesting which is already part of golangci-lint. It implements similar functionality but is disabled by default.
+
+If you already have `usetesting` enabled, make sure to enable its `context-background` and `context-todo` flags.
+
+See https://github.com/icedream/testctxlint/issues/17#issuecomment-3101551112 for all the differences if you're interested.
+
 ## Installation
 
 ### CLI Tool
@@ -182,10 +190,6 @@ func BenchmarkSomething(b *testing.B) {
 ```
 
 ## Integration
-
-### With golangci-lint
-
-Currently, testctxlint is not included in golangci-lint by default. You can run it separately or create a custom linter configuration.
 
 ### With IDEs
 
