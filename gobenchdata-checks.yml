@@ -14,7 +14,7 @@ checks:
       This monitors B/op (bytes per operation) to ensure memory usage doesn't increase significantly.
     package: ^github.com/icedream/testctxlint$
     benchmarks: ['BenchmarkTestctxlint.*']
-    diff: (current.AllocedBytesPerOp - base.AllocedBytesPerOp) / base.AllocedBytesPerOp * 100
+    diff: (current.Mem.BytesPerOp - base.Mem.BytesPerOp) / base.Mem.BytesPerOp * 100
     threshold:
       max: 25  # Allow up to 25% memory allocation increase
   - name: Allocation Count Check (allocs/op)
@@ -23,6 +23,6 @@ checks:
       This monitors allocs/op (allocations per operation) to ensure allocation patterns don't worsen.
     package: ^github.com/icedream/testctxlint$
     benchmarks: ['BenchmarkTestctxlint.*']
-    diff: (current.AllocsPerOp - base.AllocsPerOp) / base.AllocsPerOp * 100
+    diff: (current.Mem.AllocsPerOp - base.Mem.AllocsPerOp) / base.Mem.AllocsPerOp * 100
     threshold:
       max: 15  # Allow up to 15% allocation count increase
