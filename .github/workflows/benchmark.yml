@@ -31,8 +31,6 @@ jobs:
         with:
           CHECKS: true
           CHECKS_CONFIG: gobenchdata-checks.yml
-          PUBLISH_REPO: ${{ github.repository }}
-          PUBLISH_BRANCH: gh-pages
           GO_TEST_FLAGS: -benchmem -count=5 -timeout=5m
           GO_BENCHMARKS: .
           GO_TEST_PKGS: ./...
