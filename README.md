@@ -233,19 +233,21 @@ go test -bench=. -benchmem -count=5 | tee old.txt
 benchstat old.txt new.txt
 ```
 
-### Automated Benchmark Comparison
+### Continuous Benchmarking
 
-The repository includes a GitHub Actions workflow that automatically compares benchmark performance between the main branch and pull requests. When you open a PR:
+The repository uses [gobenchdata](https://github.com/bobheadxi/gobenchdata) for continuous benchmarking through GitHub Actions. When you open a PR:
 
-1. Benchmarks are run on both the main branch and your PR branch
-2. Performance differences are calculated using `benchstat`
-3. Results are posted as a comment on the PR
-4. Benchmark data is stored as artifacts for historical analysis
+1. Benchmarks are automatically run on your PR branch
+2. Performance is compared against the main branch baseline using configurable thresholds
+3. Results are posted as a comment on the PR and updated with each push
+4. Benchmark data is stored for historical tracking and analysis
 
-The benchmark comparison helps identify performance regressions and improvements, providing metrics for:
+The continuous benchmarking system monitors:
 - **Execution time** (ns/op): How long operations take
 - **Memory usage** (B/op): Bytes allocated per operation  
 - **Allocations** (allocs/op): Number of memory allocations per operation
+
+Performance regressions exceeding configured thresholds will be flagged in the PR comment to help maintain code quality.
 
 ## Testing
 
