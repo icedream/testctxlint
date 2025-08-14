@@ -1,0 +1,28 @@
+checks:
+  - name: Performance Regression Check (NsPerOp)
+    description: |-
+      Check for performance regressions in testctxlint analyzer execution time.
+      This monitors ns/op (nanoseconds per operation) to ensure performance doesn't degrade.
+    package: ^github.com/icedream/testctxlint$
+    benchmarks: ['BenchmarkTestctxlint.*']
+    diff: (current.NsPerOp - base.NsPerOp) / base.NsPerOp * 100
+    threshold:
+      max: 20  # Allow up to 20% performance regression
+  - name: Memory Allocation Check (B/op)
+    description: |-
+      Check for memory allocation regressions in testctxlint analyzer.
+      This monitors B/op (bytes per operation) to ensure memory usage doesn't increase significantly.
+    package: ^github.com/icedream/testctxlint$
+    benchmarks: ['BenchmarkTestctxlint.*']
+    diff: (current.AllocedBytesPerOp - base.AllocedBytesPerOp) / base.AllocedBytesPerOp * 100
+    threshold:
+      max: 25  # Allow up to 25% memory allocation increase
+  - name: Allocation Count Check (allocs/op)
+    description: |-
+      Check for allocation count regressions in testctxlint analyzer.
+      This monitors allocs/op (allocations per operation) to ensure allocation patterns don't worsen.
+    package: ^github.com/icedream/testctxlint$
+    benchmarks: ['BenchmarkTestctxlint.*']
+    diff: (current.AllocsPerOp - base.AllocsPerOp) / base.AllocsPerOp * 100
+    threshold:
+      max: 15  # Allow up to 15% allocation count increase
