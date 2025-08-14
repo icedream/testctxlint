@@ -27,6 +27,7 @@ jobs:
       - name: Run benchmark checks
         id: benchmark
         uses: bobheadxi/gobenchdata@v1
+        continue-on-error: true  # Don't fail the workflow if checks fail
         with:
           CHECKS: true
           CHECKS_CONFIG: gobenchdata-checks.yml

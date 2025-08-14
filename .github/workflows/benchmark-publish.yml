@@ -1,0 +1,36 @@
+---
+name: Publish Benchmark Data
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Publish benchmark data
+        uses: bobheadxi/gobenchdata@v1
+        with:
+          PUBLISH: true
+          PUBLISH_BRANCH: gh-pages
+          PRUNE_COUNT: 30  # Keep last 30 benchmark runs
+          GO_TEST_FLAGS: -benchmem -count=5 -timeout=5m
+          GO_BENCHMARKS: .
+          GO_TEST_PKGS: ./...
+          GIT_COMMIT_MESSAGE: "feat: add benchmark data for ${{ github.sha }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
