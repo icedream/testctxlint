@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/josephspurrier/goversioninfo v1.5.0
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.0
 	golang.org/x/mod v0.26.0
 	golang.org/x/tools v0.35.0
 )
